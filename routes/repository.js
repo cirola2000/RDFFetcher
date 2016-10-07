@@ -89,8 +89,8 @@ function read_repository(rep, callback) {
 
   // make the request
   request.get(repositoryFullURL, {}, function (e, res) { 
-    
-    // parsing XML from re3
+    try {
+      // parsing XML from re3
     var document = new xmldoc.XmlDocument(res.body);
 
     document.eachChild(function (child, index, array) {
@@ -124,7 +124,10 @@ function read_repository(rep, callback) {
       });
     
     });
-
+    }
+    catch(E){
+      console.log(E);
+    }
     callback();
   });
 

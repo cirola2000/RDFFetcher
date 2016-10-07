@@ -9,10 +9,9 @@ var router = express.Router();
 var current_pack = "current_package_list_with_resources/";
 
 var dataset_list_url = "package_list";
-var get_dataset_url = "package_show";
-var html_fileservers = 0;
-var res_out_of_JSON_res = 0;
+var get_dataset_url = "package_show"
 
+var res_out_of_res = 0;
 // create a queue and set the max the amount of concurrent ajax request to 20
 var queue = async.queue(saveDatasetAndResources, 100);
 
@@ -38,9 +37,9 @@ router.get('/update', function (req, res, next) {
     // iterate over all CKAN repositories
     if (mongoRepositories != "")
       mongoRepositories.forEach(function (element) {
-      
+        console.log("test");
         if (element.active == true) {
-          
+        
           // var repositoryDatasetListURL = repositories[repository] + dataset_list_url + "?limit=1";
           element.original = element.url;
         
@@ -55,6 +54,7 @@ router.get('/update', function (req, res, next) {
           }
 
           var repositoryDatasetListURL = element.url + "api/3/action/" + dataset_list_url;
+          
           // console.log(repositoryDatasetListURL);
     
           // request.get(dataset_list_url + "", {}, function (err, res) {
@@ -95,16 +95,14 @@ router.get('/update', function (req, res, next) {
 
 
 
-  }).skip(0); //limit(1);
+  }); //.skip(0).limit(1);
 
 
   // after finish all ajax request, save all formats to a the Format collection
   queue.drain = function () {
 
     console.log("All datasets were fetched! Saving formats to MongoDB...");
-    console.log("HTML Fileservers found: " + html_fileservers);
-    console.log("Resources Fetched from JSON-resources: " + res_out_of_JSON_res);
-
+    console.log("Resources Fetched from Resources: " + res_out_of_res);
   };
 
   res.send('Please check logs in the console.');
@@ -140,38 +138,35 @@ function saveDatasetAndResources(dataset, callback) {
         resources = JSON.parse(r.body).result[0].resources;
 
         resources.forEach(function (res) {
-        
-        try{
-//-------------- HTML check: Try to find i.e. Apache Servers with potential resource-folders
-          if(res.format == 'html' || res.format == 'HTML' || res.format == 'HTML5'){
-            checkHTMLResource(res);
-          }
+
 //-------------- JSON check: Try to use JSON-resource as Dataset
+        try {
           if(res.format == 'JSON' || res.format == 'Json' || res.format == 'json'){
             var res_dataset = {
               repository: res.url,
               repositoryID: dataset.repositoryID,
               datasetID: res.name
-            }
+              }
             console.log("Trying to fetch dataset from resource: " + res.url);
-            checkJSONResource(res_dataset);
-          }  
+            checkJSONResource(res_dataset, function(){});
+          }
         }
-        catch(E){
+        catch(E) {
           console.log(E);
         }
-         
-          res.repositoryID = dataset.repositoryID;
-          res.repository = dataset.repository;
-          res.datasetID = dataset.datasetID;
+//--------------
+        res.repositoryID = dataset.repositoryID;
+        res.repository = dataset.repository;
+        res.datasetID = dataset.datasetID;
 
-          console.log("Saving resource: " + res.name + " from dataset " + res.datasetID);
+        //console.log("Saving resource: " + res.name + " from dataset " + res.datasetID);
 
-          saveResource(res);
+        saveResource(res);
+
       });
     }
     catch (E) {
-      //console.log(E);
+      console.log(E);
 
     }
 
@@ -179,6 +174,70 @@ function saveDatasetAndResources(dataset, callback) {
   });
 
 }
+
+//-------------- JSON check
+function checkJSONResource(dataset, callback) {
+  
+  // get details of the dataset
+  var datasetURL = dataset.repository;  //changed!
+
+  console.log("Fetching resources from dataset: " + datasetURL);
+  console.log("Repository: " + dataset.repository);
+
+  // saving the dataset
+  saveDataset({ datasetID: dataset.datasetID, repository: dataset.repository, repositoryID: dataset.repositoryID });  
+
+  // make the request to retrieve dataset and search for resources
+  request.get(datasetURL, {}, function (e, r) {
+
+    try {
+      // save dataset details
+      saveDatasetDetail(JSON.parse(r.body).result);
+
+      // array of resources
+      var resources = JSON.parse(r.body).result.resources;
+
+
+      if (typeof resources == 'undefined')
+        resources = JSON.parse(r.body).result[0].resources;
+
+        resources.forEach(function (res) {
+
+          try {
+          if(res.format == 'JSON' || res.format == 'Json' || res.format == 'json'){
+            var res_dataset = {
+              repository: res.url,
+              repositoryID: dataset.repositoryID,
+              datasetID: res.name
+              }
+            console.log("Trying to fetch dataset from resource: " + res.url);
+            checkJSONResource(res_dataset, function(){});
+          }
+        }
+        catch(E) {
+          console.log(E);
+        }
+
+        res.repositoryID = dataset.repositoryID;
+        res.repository = dataset.repository;
+        res.datasetID = dataset.datasetID;
+        
+        res_out_of_JSON_res = res_out_of_JSON_res + 1;
+
+        console.log("Saving resource: " + res.name + " from dataset " + res.datasetID);
+
+        saveResource(res);
+
+      });
+    }
+    catch (E) {
+      console.log(E);
+    }
+    callback();
+  });
+}
+//--------------
+
 
 function saveDatasetDetail(result) {
   mongoose.model("DatasetDetail").find({ name: result.name }, function (err, docs) {
@@ -222,83 +281,6 @@ function saveResource(res) {
     }
   })
 }
-
-//-------------- HTML check
-function checkHTMLResource(res) { 
-
-  console.log("Fetching HTML from resource: " + res.url);
-
-  // make the request to retrieve html and search for signs of folders
-  request(res.url, function (error, response, body) {
-    try {
-      if(body.indexOf('folder.') !== -1) {
-        // tested with '<img src="icons/folder', 'index', 'folder'
-        console.log('Fileserver found at: '+ res.url);
-        html_fileservers = html_fileservers + 1;
-      }
-    }
-    catch (E) {
-      //console.log('Error while fetching HTML File');
-    }
-  });
-}
-
-//-------------- JSON check
-function checkJSONResource(dataset) {
-  
-  // get details of the dataset
-  var datasetURL = dataset.repository;  //changed!
-
-  console.log("Fetching resources from dataset: " + datasetURL);
-  console.log("Repository: " + dataset.repository);
-
-  // saving the dataset
-  saveDataset({ datasetID: dataset.datasetID, repository: dataset.repository, repositoryID: dataset.repositoryID });  
-
-  // make the request to retrieve dataset and search for resources
-  request.get(datasetURL, {}, function (e, r) {
-
-    try {
-      // save dataset details
-      saveDatasetDetail(JSON.parse(r.body).result);
-
-      // array of resources
-      var resources = JSON.parse(r.body).result.resources;
-
-
-      if (typeof resources == 'undefined')
-        resources = JSON.parse(r.body).result[0].resources;
-
-        resources.forEach(function (res) {
-
-        if(res.format == 'JSON' || res.format == 'Json' || res.format == 'json'){
-          var res_dataset = {
-            repository: res.url,
-            repositoryID: dataset.repositoryID,
-            datasetID: res.name
-          }
-          console.log("Trying to fetch dataset from resource: " + res.url);
-          checkJSONResource(res_dataset, function(){});
-        }
-
-        res.repositoryID = dataset.repositoryID;
-        res.repository = dataset.repository;
-        res.datasetID = dataset.datasetID;
-        
-        res_out_of_JSON_res = res_out_of_JSON_res + 1;
-
-        console.log("Saving resource: " + res.name + " from dataset " + res.datasetID);
-
-        saveResource(res);
-
-      });
-    }
-    catch (E) {
-      console.log(E);
-    }
-  });
-}
-//--------------
 
 
 
